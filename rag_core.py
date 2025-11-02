@@ -1,4 +1,4 @@
-# rag_core.py
+import faiss
 import numpy as np
 from typing import List, Dict, Any, Optional
 import logging
@@ -86,6 +86,7 @@ class RAGCore:
     def __init__(self, embedding_manager: EmbeddingManager):
         self.embedding_manager = embedding_manager
         self.documents = []
+        self.index = None
         self.document_embeddings = None
     
     def load_documents(self, documents: List[Dict[str, Any]]) -> bool:
@@ -99,68 +100,71 @@ class RAGCore:
             return False
     
     def precompute_embeddings(self) -> bool:
-        """Предварительное вычисление эмбеддингов для всех документов"""
         if not self.documents:
             logger.error("Нет документов для вычисления эмбеддингов")
             return False
-            
         try:
             texts = [doc['text'] for doc in self.documents]
-            self.document_embeddings = self.embedding_manager.encode_batch(texts)
-            logger.info(f"Вычислены эмбеддинги для {len(self.documents)} документов")
+            embeddings = self.embedding_manager.encode_batch(texts)
+            if embeddings is None:
+                logger.error("Не удалось получить эмбеддинги")
+                return False
+
+            # Определяем размерность эмбеддингов (берём из первого)
+            self.embedding_dim = len(embeddings[0])
+
+            # Преобразуем в numpy массив (n_docs, dim)
+            embeddings_matrix = np.array(embeddings).astype('float32')
+
+            # Нормализуем для использования косинусного сходства через L2
+            faiss.normalize_L2(embeddings_matrix)
+
+            # Создаём FAISS индекс типа Flat (точный поиск)
+            self.index = faiss.IndexFlatIP(self.embedding_dim)  # Inner Product = Cosine после нормализации
+            self.index.add(embeddings_matrix)
+
+            logger.info(f"FAISS индекс создан для {len(self.documents)} документов")
             return True
         except Exception as e:
-            logger.error(f"Ошибка вычисления эмбеддингов: {e}")
+            logger.error(f"Ошибка при создании FAISS индекса: {e}")
             return False
-    
+
     def retrieve(self, question: str, top_k: int = 3, similarity_threshold: float = 0.3) -> List[Dict[str, Any]]:
-        """Поиск релевантных документов"""
-        if not self.document_embeddings:
-            logger.error("Эмбеддинги документов не вычислены")
+        if self.index is None:
+            logger.error("FAISS индекс не создан. Вызовите precompute_embeddings().")
             return []
-        
+
         try:
-            # Получаем эмбеддинг вопроса
             question_embedding = self.embedding_manager.encode(question)
             if question_embedding is None:
                 return []
-            
-            # Вычисляем схожесть с каждым документом
-            similarities = []
-            for doc_emb in self.document_embeddings:
-                similarity = self._cosine_similarity(question_embedding, doc_emb)
-                similarities.append(similarity)
-            
-            # Ранжируем и фильтруем по порогу
+
+            # Подготавливаем эмбеддинг запроса
+            query_vec = question_embedding.astype('float32').reshape(1, -1)
+            faiss.normalize_L2(query_vec)
+
+            # Поиск в FAISS
+            similarities, indices = self.index.search(query_vec, top_k)
+
             results = []
-            sorted_indices = np.argsort(similarities)[::-1]
-            
-            for idx in sorted_indices[:top_k]:
-                if similarities[idx] >= similarity_threshold:
+            for sim, idx in zip(similarities[0], indices[0]):
+                if sim >= similarity_threshold:
                     results.append({
                         'document': self.documents[idx],
-                        'similarity': similarities[idx],
+                        'similarity': float(sim),
                         'text': self.documents[idx]['text']
                     })
-            
+
             logger.info(f"Найдено {len(results)} релевантных документов")
             return results
-            
         except Exception as e:
-            logger.error(f"Ошибка поиска документов: {e}")
+            logger.error(f"Ошибка поиска в FAISS: {e}")
             return []
     
-    def _cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
-        """Вычисление косинусного сходства"""
-        try:
-            return np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
-        except Exception:
-            return 0.0
-    
     def get_status(self) -> Dict[str, Any]:
-        """Статус системы"""
         return {
             'documents_loaded': len(self.documents),
-            'embeddings_computed': self.document_embeddings is not None,
+            'faiss_index_built': self.index is not None,
+            'embedding_dim': self.embedding_dim,
             'embedding_manager_status': self.embedding_manager.get_status()
         }

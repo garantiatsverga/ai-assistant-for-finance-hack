@@ -16,6 +16,7 @@ class EmbeddingManager:
             api_key=api_key
         )
         self.model = model
+        self.embedding_dim = 1536
         self.headers = headers
         
     def encode(self, text: str) -> Optional[np.ndarray]:
