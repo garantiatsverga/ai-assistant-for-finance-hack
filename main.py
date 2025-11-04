@@ -94,8 +94,8 @@ def main():
 
         retrieved_docs = rag.retrieve(
             question,
-            top_k=5,
-            similarity_threshold=0.05,
+            top_k=25,
+            similarity_threshold=0.01,
             use_reranker=True
         )
         # ---
