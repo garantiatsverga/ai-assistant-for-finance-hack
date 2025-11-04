@@ -1,8 +1,8 @@
 import os
 import logging
 import pandas as pd
-from typing import List, Dict, Any
 import time
+from typing import List, Dict, Any
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -12,18 +12,24 @@ logger = logging.getLogger(__name__)
 from dotenv import load_dotenv
 load_dotenv()
 
-# Импорты наших модулей
+# Импорты моих модулей
 from embedding_service import EmbeddingManager
 from rag_core import LLMService, RAGCore
 
 def load_train_documents(csv_path: str) -> List[Dict[str, Any]]:
-    """Загрузка документов из train_data.csv"""
+    """Загрузка документов из train_data.csv с объединением всех релевантных полей"""
     df = pd.read_csv(csv_path, on_bad_lines='skip', quoting=1)
     documents = []
     for _, row in df.iterrows():
-        # Нам нужен только текст
-        if pd.notna(row.get('text')):
-            documents.append({"text": row['text']})
+        text_part = row.get('text', '')
+        tags_part = ' '.join(row.get('tags', [])) if isinstance(row.get('tags'), list) else row.get('tags', '')
+        combined_text = ' '.join([text_part, tags_part]).strip()
+
+        documents.append({
+            "text": combined_text,
+            "original_text": row.get('text', ''),
+            "tags": row.get('tags', []),
+        })
     logger.info(f"Загружено {len(documents)} документов из {csv_path}")
     return documents
 
@@ -38,20 +44,21 @@ def main():
     BASE_URL = "https://ai-for-finance-hack.up.railway.app/"
 
     # Ключи из .env
-    EMBEDDER_API_KEY=os.getenv("EMBEDDER_API_KEY")
+    EMBEDDER_API_KEY = os.getenv("EMBEDDER_API_KEY")
     LLM_API_KEY = os.getenv("LLM_API_KEY")
+    RERANKER_API_KEY = os.getenv("EMBEDDER_API_KEY")
 
+    if not EMBEDDER_API_KEY or not RERANKER_API_KEY:
+        raise ValueError("Отсутствует ключ эмбеддера .env файле!")
     if not LLM_API_KEY:
         raise ValueError("Отсутствует API-ключ в .env-файле!")
-    if not EMBEDDER_API_KEY:
-        raise ValueError("Отсутствует ключ эмбеддинга в .env-файле!")
-
 
     # Инициализация сервисов
     embedding_manager = EmbeddingManager(
         api_key=EMBEDDER_API_KEY,
         base_url=BASE_URL,
-        model="text-embedding-3-small"
+        model="text-embedding-3-small",
+        delay_per_request=0.2
     )
 
     llm_service = LLMService(
@@ -60,7 +67,8 @@ def main():
         model="openrouter/mistralai/mistral-small-3.2-24b-instruct"
     )
 
-    rag = RAGCore(embedding_manager=embedding_manager)
+    # Передаём RERANKER_API_KEY
+    rag = RAGCore(embedding_manager=embedding_manager, reranker_api_key=RERANKER_API_KEY)
 
     # Загрузка и индексация документов
     documents = load_train_documents("train_data.csv")
@@ -84,9 +92,17 @@ def main():
 
         logger.info(f"Обработка вопроса {q_id}: {question[:60]}...")
 
-        retrieved_docs = rag.retrieve(question, top_k=3, similarity_threshold=0.25)
+        retrieved_docs = rag.retrieve(
+            question,
+            top_k=5,
+            similarity_threshold=0.05,
+            use_reranker=True
+        )
+        # ---
         answer = llm_service.generate_answer(question, retrieved_docs)
         answers.append({"ID вопроса": q_id, "Ответ": answer})
+
+        # Задержка между запросами
         time.sleep(5)
 
     # Сохранение результата

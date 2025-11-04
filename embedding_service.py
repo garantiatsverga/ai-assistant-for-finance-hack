@@ -1,16 +1,16 @@
-# embedding_manager.py
+# embedding_service.py
 import numpy as np
 from typing import List, Optional, Dict, Any
 import logging
 from openai import OpenAI
-import os
+import time
 
 logger = logging.getLogger(__name__)
 
 class EmbeddingManager:
     """Менеджер для работы с эмбеддингами через API"""
     
-    def __init__(self, api_key: str, base_url: str, model: str = "text-embedding-3-small", headers: dict = None):
+    def __init__(self, api_key: str, base_url: str, model: str = "text-embedding-3-small", headers: dict = None, delay_per_request: float = 0.2):
         self.client = OpenAI(
             base_url=base_url,
             api_key=api_key
@@ -18,9 +18,13 @@ class EmbeddingManager:
         self.model = model
         self.embedding_dim = 1536
         self.headers = headers
+        self.delay_per_request = delay_per_request
         
     def encode(self, text: str) -> Optional[np.ndarray]:
         """Получение эмбеддинга для одного текста"""
+        # Задержка перед запросом
+        if self.delay_per_request > 0:
+            time.sleep(self.delay_per_request)
         try:
             response = self.client.embeddings.create(
                 model=self.model,
@@ -36,8 +40,11 @@ class EmbeddingManager:
         embeddings = []
         
         for i, text in enumerate(texts):
+            # Задержка перед каждым запросом в батче
+            if self.delay_per_request > 0:
+                time.sleep(self.delay_per_request)
             try:
-                embedding = self.encode(text)
+                embedding = self.encode(text) # вызов с задержкой
                 if embedding is not None:
                     embeddings.append(embedding)
                 else:
