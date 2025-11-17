@@ -1,4 +1,3 @@
-# llm_service.py
 from typing import List, Dict, Any
 import logging
 from openai import OpenAI
@@ -15,7 +14,7 @@ class LLMService:
         )
         self.model = model
         self.headers = headers
-        logger.info(f"LLMService инициализирован с моделью {model}")
+        logger.info(f"LLM инициализирован с моделью {model}")
     
     def generate_answer(self, question: str, context_docs: List[Dict[str, Any]]) -> str:
         """Генерация ответа с контекстом"""
