@@ -205,3 +205,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Организаторы закатона попросили не включать .csv-файлы - подробнее в README
+*.csv
